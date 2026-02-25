@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<Configuration>
+  <EB_VERSION value="EB_VERSION_INFO"/>
+
+  <InjectEBLibraries>
+    <JSLibraries value="1"/>
+  </InjectEBLibraries>
+
+  <Applications>
+    <Application>
+      <General>
+        <Name value="ERP"/>
+        <StartPage value="https://fulfillment.aws-prod.sstack.com/app-list" name="ERP"/>
+      </General>
+
+      <HTMLStyles>
+        <JavascriptEnabled value="1"/>
+        <DomStorageEnabled value="1"/>
+      </HTMLStyles>
+
+      <CustomDOMElements value="file://%PERSISTCONFDIR%/mytags.txt"/>
+    </Application>
+  </Applications>
+</Configuration>
