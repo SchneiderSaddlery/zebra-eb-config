@@ -144,6 +144,20 @@
             border-color: #005a80;
         }
 
+        .sign-in-btn:disabled {
+            background-color: #999;
+            border-color: #999;
+        }
+
+        #debug-status {
+            font-size: 11px;
+            color: #999;
+            text-align: center;
+            padding: 8px;
+            max-width: 640px;
+            word-break: break-all;
+        }
+
         .hidden { display: none !important; }
     </style>
 </head>
@@ -151,7 +165,8 @@
     <!-- Sign-in screen (shown when not authenticated) -->
     <div id="sign-in-screen" class="hidden">
         <img src="ss-logo.png" alt="Schneiders logo">
-        <button class="sign-in-btn" onclick="signIn()">Sign In with Microsoft</button>
+        <button class="sign-in-btn" id="sign-in-btn" disabled onclick="signIn()">Loading...</button>
+        <div id="debug-status"></div>
     </div>
 
     <!-- Authenticated view -->
@@ -171,7 +186,7 @@
 
     <script>
         // --- Configuration ---
-        const MSAL_CONFIG = {
+        var MSAL_CONFIG = {
             auth: {
                 clientId: 'fd1afd85-d619-46c6-b7ef-3bf261086e65',
                 authority: 'https://login.microsoftonline.com/2df558ec-e934-42b4-b689-fbec5a992751',
@@ -182,19 +197,26 @@
             }
         };
 
-        const LOGIN_SCOPES = { scopes: ['User.Read'] };
-        const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-        const TEAMS_WEBHOOK_URL = ''; // Set after creating webhook
+        var LOGIN_SCOPES = { scopes: ['User.Read'] };
+        var INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+        var TEAMS_WEBHOOK_URL = ''; // Set after creating webhook
 
         // --- State ---
-        let msalInstance = null;
-        let inactivityTimer = null;
+        var msalInstance = null;
+        var msalReady = false;
+        var inactivityTimer = null;
+
+        // --- Debug status (visible on page for troubleshooting) ---
+        function setStatus(msg) {
+            var el = document.getElementById('debug-status');
+            if (el) el.textContent = msg;
+            console.log('[ScannerLogin] ' + msg);
+        }
 
         // --- Device identification via Fully Kiosk JS API ---
         function getDeviceName() {
             try {
                 if (typeof fully !== 'undefined') {
-                    // Try hostname first, fall back to IP, then MAC
                     var hostname = fully.getHostname && fully.getHostname();
                     if (hostname) return hostname;
                     var ip = fully.getIp4Address && fully.getIp4Address();
@@ -203,10 +225,8 @@
                     if (mac) return mac;
                 }
             } catch (e) { /* not in Fully Kiosk */ }
-            // Fallback: check localStorage for a manually set name
             var stored = localStorage.getItem('deviceName');
             if (stored) return stored;
-            // Final fallback
             return 'Unknown Device';
         }
 
@@ -250,13 +270,19 @@
                     summary: 'Scanner Login',
                     text: message
                 })
-            }).catch(function() { /* silent fail — logging is best-effort */ });
+            }).catch(function() { /* silent fail */ });
         }
 
         // --- UI updates ---
         function showSignIn() {
             document.getElementById('sign-in-screen').classList.remove('hidden');
             document.getElementById('app-view').classList.add('hidden');
+        }
+
+        function enableSignInButton() {
+            var btn = document.getElementById('sign-in-btn');
+            btn.disabled = false;
+            btn.textContent = 'Sign In with Microsoft';
         }
 
         function showApp(displayName) {
@@ -268,34 +294,58 @@
 
         // --- MSAL auth ---
         async function initMsal() {
-            msalInstance = new msal.PublicClientApplication(MSAL_CONFIG);
-            await msalInstance.initialize();
+            try {
+                setStatus('Loading...');
 
-            // Handle redirect response (after Microsoft login page)
-            var response = await msalInstance.handleRedirectPromise();
-            if (response && response.account) {
-                onSignInSuccess(response.account);
-                return;
-            }
-
-            // Check for existing session
-            var accounts = msalInstance.getAllAccounts();
-            if (accounts.length > 0) {
-                // Try silent token acquisition to verify session is still valid
-                try {
-                    var silentResult = await msalInstance.acquireTokenSilent({
-                        scopes: ['User.Read'],
-                        account: accounts[0]
-                    });
-                    onSignInSuccess(accounts[0]);
-                } catch (e) {
-                    // Session expired, show sign-in
+                if (typeof msal === 'undefined') {
+                    setStatus('ERROR: MSAL library failed to load');
                     showSignIn();
+                    enableSignInButton();
+                    return;
                 }
-                return;
-            }
 
-            showSignIn();
+                msalInstance = new msal.PublicClientApplication(MSAL_CONFIG);
+                await msalInstance.initialize();
+                setStatus('Checking session...');
+
+                // Handle redirect response (after Microsoft login page)
+                var response = await msalInstance.handleRedirectPromise();
+                if (response && response.account) {
+                    setStatus('Welcome ' + response.account.name);
+                    onSignInSuccess(response.account);
+                    return;
+                }
+
+                // Check for existing session
+                var accounts = msalInstance.getAllAccounts();
+                if (accounts.length > 0) {
+                    setStatus('Validating session...');
+                    try {
+                        await msalInstance.acquireTokenSilent({
+                            scopes: ['User.Read'],
+                            account: accounts[0]
+                        });
+                        setStatus('Welcome back ' + accounts[0].name);
+                        onSignInSuccess(accounts[0]);
+                    } catch (e) {
+                        setStatus('Session expired');
+                        msalReady = true;
+                        showSignIn();
+                        enableSignInButton();
+                    }
+                    return;
+                }
+
+                // No session — show sign-in
+                msalReady = true;
+                setStatus('');
+                showSignIn();
+                enableSignInButton();
+            } catch (e) {
+                setStatus('Init error: ' + e.message);
+                showSignIn();
+                enableSignInButton();
+            }
         }
 
         function onSignInSuccess(account) {
@@ -305,10 +355,17 @@
         }
 
         async function signIn() {
+            if (!msalInstance) {
+                setStatus('Not ready — please wait');
+                return;
+            }
             try {
+                setStatus('Redirecting to Microsoft...');
+                document.getElementById('sign-in-btn').disabled = true;
                 await msalInstance.loginRedirect(LOGIN_SCOPES);
             } catch (e) {
-                console.error('Sign-in failed:', e);
+                setStatus('Sign-in error: ' + e.message);
+                document.getElementById('sign-in-btn').disabled = false;
             }
         }
 
@@ -317,7 +374,7 @@
             // Clear MSAL session tokens — do NOT call logoutRedirect
             // which would clear Microsoft SSO cookies and break Custom Apps auth
             sessionStorage.clear();
-            // Reload page so MSAL initializes fresh (avoids stale in-memory state)
+            // Reload page so MSAL initializes fresh
             window.location.replace(window.location.origin + window.location.pathname);
         }
 
