@@ -30,46 +30,16 @@
 
         header {
             background-color: #ffffff;
-            padding: 12px 16px;
+            padding: 16px;
             display: flex;
             align-items: center;
-            justify-content: space-between;
+            justify-content: center;
             border-bottom: 1px solid #e0e6eb;
         }
 
         header img {
-            max-width: 160px;
+            max-width: 200px;
             height: auto;
-        }
-
-        .user-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 14px;
-            color: #555;
-        }
-
-        .user-name {
-            font-weight: 500;
-            color: #333;
-        }
-
-        .sign-out-btn {
-            font-family: 'Roboto', sans-serif;
-            font-size: 13px;
-            color: #007bad;
-            background: none;
-            border: 1px solid #007bad;
-            padding: 6px 12px;
-            cursor: pointer;
-            -webkit-tap-highlight-color: transparent;
-            touch-action: manipulation;
-        }
-
-        .sign-out-btn:active {
-            background-color: #007bad;
-            color: #ffffff;
         }
 
         main {
@@ -104,273 +74,15 @@
             background-color: #005a80;
             border-color: #005a80;
         }
-
-        /* Sign-in screen */
-        #sign-in-screen {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 24px 16px;
-            gap: 24px;
-        }
-
-        #sign-in-screen img {
-            max-width: 240px;
-            height: auto;
-        }
-
-        .sign-in-btn {
-            display: block;
-            width: 100%;
-            max-width: 640px;
-            padding: 18px 24px;
-            font-family: 'Roboto', sans-serif;
-            font-size: 18px;
-            font-weight: 500;
-            text-align: center;
-            text-decoration: none;
-            color: #ffffff;
-            background-color: #007bad;
-            border: 1px solid #007bad;
-            cursor: pointer;
-            -webkit-tap-highlight-color: transparent;
-            touch-action: manipulation;
-        }
-
-        .sign-in-btn:active {
-            background-color: #005a80;
-            border-color: #005a80;
-        }
-
-        #debug-status {
-            font-size: 11px;
-            color: #999;
-            text-align: center;
-            padding: 8px;
-            max-width: 640px;
-            word-break: break-all;
-        }
-
-        .hidden { display: none !important; }
     </style>
 </head>
 <body>
-    <!-- Sign-in screen (visible by default) -->
-    <div id="sign-in-screen">
+    <header>
         <img src="ss-logo.png" alt="Schneiders logo">
-        <a class="sign-in-btn" id="sign-in-link" href="#">Sign In with Microsoft</a>
-        <div id="debug-status"></div>
-    </div>
-
-    <!-- Authenticated view -->
-    <div id="app-view" class="hidden">
-        <header>
-            <img src="ss-logo.png" alt="Schneiders logo">
-            <div class="user-info">
-                <span class="user-name" id="user-display-name"></span>
-                <button class="sign-out-btn" onclick="signOut()">Sign Out</button>
-            </div>
-        </header>
-        <main>
-            <a href="https://fulfillment.aws-prod.sstack.com/app-list" class="app-btn">Custom Apps</a>
-            <a href="https://sstack.fulfil.io/client/" class="app-btn">Fulfil WMS</a>
-        </main>
-    </div>
-
-    <script>
-        // --- Configuration ---
-        var CLIENT_ID = 'fd1afd85-d619-46c6-b7ef-3bf261086e65';
-        var TENANT_ID = '2df558ec-e934-42b4-b689-fbec5a992751';
-        var REDIRECT_URI = 'https://schneidersaddlery.github.io/zebra-eb-config/';
-        var INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-        var TEAMS_WEBHOOK_URL = ''; // Set after creating webhook
-
-        // --- State ---
-        var inactivityTimer = null;
-
-        // --- Debug status ---
-        function setStatus(msg) {
-            var el = document.getElementById('debug-status');
-            if (el) el.textContent = msg;
-        }
-
-        // --- JWT decode (no library needed — just base64 decode the payload) ---
-        function decodeJwt(token) {
-            var parts = token.split('.');
-            if (parts.length !== 3) return null;
-            var payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-            while (payload.length % 4) payload += '=';
-            var json = atob(payload);
-            return JSON.parse(json);
-        }
-
-        // --- Generate random nonce ---
-        function generateNonce() {
-            var array = new Uint8Array(16);
-            crypto.getRandomValues(array);
-            var hex = '';
-            for (var i = 0; i < array.length; i++) {
-                hex += ('0' + array[i].toString(16)).slice(-2);
-            }
-            return hex;
-        }
-
-        // --- Device identification via Fully Kiosk JS API ---
-        function getDeviceName() {
-            try {
-                if (typeof fully !== 'undefined') {
-                    var hostname = fully.getHostname && fully.getHostname();
-                    if (hostname) return hostname;
-                    var ip = fully.getIp4Address && fully.getIp4Address();
-                    if (ip) return ip;
-                    var mac = fully.getMacAddress && fully.getMacAddress();
-                    if (mac) return mac;
-                }
-            } catch (e) { /* not in Fully Kiosk */ }
-            var stored = localStorage.getItem('deviceName');
-            if (stored) return stored;
-            return 'Unknown Device';
-        }
-
-        // --- Inactivity auto-logout ---
-        function resetInactivityTimer() {
-            if (inactivityTimer) clearTimeout(inactivityTimer);
-            inactivityTimer = setTimeout(function() {
-                signOut();
-            }, INACTIVITY_TIMEOUT);
-        }
-
-        function startInactivityTracking() {
-            var events = ['touchstart', 'click', 'scroll', 'keydown'];
-            events.forEach(function(evt) {
-                document.addEventListener(evt, resetInactivityTimer, { passive: true });
-            });
-            resetInactivityTimer();
-        }
-
-        function stopInactivityTracking() {
-            if (inactivityTimer) clearTimeout(inactivityTimer);
-            var events = ['touchstart', 'click', 'scroll', 'keydown'];
-            events.forEach(function(evt) {
-                document.removeEventListener(evt, resetInactivityTimer);
-            });
-        }
-
-        // --- Teams webhook ---
-        function notifyTeams(userName, deviceName) {
-            if (!TEAMS_WEBHOOK_URL) return;
-            var now = new Date();
-            var time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-            var date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-            var message = userName + ' signed into ' + deviceName + ' at ' + time + ' (' + date + ')';
-
-            fetch(TEAMS_WEBHOOK_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    '@type': 'MessageCard',
-                    summary: 'Scanner Login',
-                    text: message
-                })
-            }).catch(function() { /* silent fail */ });
-        }
-
-        // --- UI updates ---
-        function showApp(displayName) {
-            document.getElementById('user-display-name').textContent = displayName;
-            document.getElementById('sign-in-screen').classList.add('hidden');
-            document.getElementById('app-view').classList.remove('hidden');
-            startInactivityTracking();
-        }
-
-        // --- Build sign-in link (set href on <a> tag so tap is a normal link follow) ---
-        function buildSignInLink() {
-            var nonce = generateNonce();
-            sessionStorage.setItem('auth_nonce', nonce);
-
-            var authUrl = 'https://login.microsoftonline.com/' + TENANT_ID + '/oauth2/v2.0/authorize'
-                + '?client_id=' + encodeURIComponent(CLIENT_ID)
-                + '&response_type=id_token'
-                + '&redirect_uri=' + encodeURIComponent(REDIRECT_URI)
-                + '&scope=' + encodeURIComponent('openid profile')
-                + '&response_mode=fragment'
-                + '&nonce=' + encodeURIComponent(nonce);
-
-            var link = document.getElementById('sign-in-link');
-            if (link) link.href = authUrl;
-        }
-
-        // --- Sign out ---
-        function signOut() {
-            stopInactivityTracking();
-            sessionStorage.clear();
-            window.location.replace(REDIRECT_URI);
-        }
-
-        // --- On page load: check for ID token in hash or existing session ---
-        function init() {
-            var hash = window.location.hash;
-
-            // 1. Check if we have an id_token in the URL hash (returning from Microsoft login)
-            if (hash && hash.indexOf('id_token=') !== -1) {
-                var params = {};
-                hash.substring(1).split('&').forEach(function(pair) {
-                    var parts = pair.split('=');
-                    params[decodeURIComponent(parts[0])] = decodeURIComponent(parts[1] || '');
-                });
-
-                if (params.id_token) {
-                    var claims = decodeJwt(params.id_token);
-                    if (claims) {
-                        var savedNonce = sessionStorage.getItem('auth_nonce');
-                        if (savedNonce && claims.nonce === savedNonce) {
-                            var displayName = claims.name || claims.preferred_username || claims.upn || 'User';
-                            sessionStorage.setItem('user_name', displayName);
-                            sessionStorage.removeItem('auth_nonce');
-                            history.replaceState(null, '', window.location.pathname);
-                            showApp(displayName);
-                            notifyTeams(displayName, getDeviceName());
-                            return;
-                        } else {
-                            setStatus('Nonce mismatch — please sign in again');
-                            sessionStorage.clear();
-                            history.replaceState(null, '', window.location.pathname);
-                            return;
-                        }
-                    }
-                }
-
-                setStatus('Sign-in failed — please try again');
-                history.replaceState(null, '', window.location.pathname);
-                return;
-            }
-
-            // 2. Check for error in hash (e.g., user cancelled)
-            if (hash && hash.indexOf('error=') !== -1) {
-                setStatus('Sign-in cancelled');
-                history.replaceState(null, '', window.location.pathname);
-                return;
-            }
-
-            // 3. Clean up any stale hash
-            if (hash) {
-                history.replaceState(null, '', window.location.pathname);
-            }
-
-            // 4. Check for existing session
-            var savedName = sessionStorage.getItem('user_name');
-            if (savedName) {
-                showApp(savedName);
-                return;
-            }
-
-            // 5. No session — build the sign-in link href
-            buildSignInLink();
-        }
-
-        init();
-    </script>
+    </header>
+    <main>
+        <a href="https://fulfillment.aws-prod.sstack.com/app-list" class="app-btn">Custom Apps</a>
+        <a href="https://sstack.fulfil.io/client/" class="app-btn">Fulfil WMS</a>
+    </main>
 </body>
 </html>
