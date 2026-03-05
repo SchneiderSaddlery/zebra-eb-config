@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Sstack</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: #f8f9fa;
+            color: #333333;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background-color: #ffffff;
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-bottom: 1px solid #e0e6eb;
+        }
+
+        header img {
+            max-width: 200px;
+            height: auto;
+        }
+
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px 16px;
+            gap: 16px;
+        }
+
+        .app-btn {
+            display: block;
+            width: 100%;
+            max-width: 640px;
+            padding: 16px 24px;
+            font-family: 'Roboto', sans-serif;
+            font-size: 18px;
+            font-weight: 400;
+            text-align: center;
+            text-decoration: none;
+            color: #ffffff;
+            background-color: #007bad;
+            border: 1px solid #007bad;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .app-btn:active {
+            background-color: #005a80;
+            border-color: #005a80;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <img src="ss-logo.png" alt="Schneiders logo">
+    </header>
+    <main>
+        <a href="https://fulfillment.aws-prod.sstack.com/app-list" class="app-btn">Custom Apps</a>
+        <a href="https://sstack.fulfil.io/client/" class="app-btn">Fulfil WMS</a>
+    </main>
+</body>
+</html>
