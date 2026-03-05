@@ -292,24 +292,7 @@
             startInactivityTracking();
         }
 
-        // --- MSAL auth ---
-
-        // Check if URL has an auth redirect hash but no matching MSAL state in sessionStorage
-        function hasOrphanedHash() {
-            if (location.hash.indexOf('code=') === -1) return false;
-            // Look for MSAL interaction-in-progress key
-            for (var i = 0; i < sessionStorage.length; i++) {
-                var key = sessionStorage.key(i);
-                if (key && key.indexOf('msal.') === 0 && key.indexOf('.interaction') !== -1) {
-                    return false; // Found matching state — not orphaned
-                }
-            }
-            return true; // Hash present but no MSAL state
-        }
-
-        function stripHash() {
-            history.replaceState(null, '', window.location.pathname);
-        }
+        // --- MSAL auth (popup flow — avoids redirect/hash issues in FK WebView) ---
 
         async function initMsal() {
             try {
@@ -321,41 +304,14 @@
                     return;
                 }
 
-                // Strip orphaned auth hash BEFORE MSAL sees it
-                if (hasOrphanedHash()) {
-                    setStatus('Clearing stale session...');
+                // Clean up any stale hash from previous redirect attempts
+                if (location.hash) {
+                    history.replaceState(null, '', window.location.pathname);
                     sessionStorage.clear();
-                    stripHash();
                 }
 
                 msalInstance = new msal.PublicClientApplication(MSAL_CONFIG);
                 await msalInstance.initialize();
-                setStatus('Checking session...');
-
-                // Handle redirect response with a 5-second timeout safety net
-                var response = null;
-                if (location.hash && location.hash.indexOf('code=') !== -1) {
-                    response = await Promise.race([
-                        msalInstance.handleRedirectPromise(),
-                        new Promise(function(resolve) {
-                            setTimeout(function() {
-                                setStatus('Login timed out — try again');
-                                resolve(null);
-                            }, 5000);
-                        })
-                    ]);
-                } else {
-                    response = await msalInstance.handleRedirectPromise();
-                }
-
-                if (response && response.account) {
-                    setStatus('Welcome ' + response.account.name);
-                    onSignInSuccess(response.account);
-                    return;
-                }
-
-                // If hash is still present after handleRedirectPromise, strip it
-                if (location.hash) stripHash();
 
                 // Check for existing session
                 var accounts = msalInstance.getAllAccounts();
@@ -397,13 +353,21 @@
                 setStatus('Not ready — please wait');
                 return;
             }
+            var btn = document.getElementById('sign-in-btn');
             try {
-                setStatus('Redirecting to Microsoft...');
-                document.getElementById('sign-in-btn').disabled = true;
-                await msalInstance.loginRedirect(LOGIN_SCOPES);
+                setStatus('Opening Microsoft login...');
+                btn.disabled = true;
+                var response = await msalInstance.loginPopup(LOGIN_SCOPES);
+                if (response && response.account) {
+                    setStatus('Welcome ' + response.account.name);
+                    onSignInSuccess(response.account);
+                } else {
+                    setStatus('Sign-in cancelled');
+                    btn.disabled = false;
+                }
             } catch (e) {
                 setStatus('Sign-in error: ' + e.message);
-                document.getElementById('sign-in-btn').disabled = false;
+                btn.disabled = false;
             }
         }
 
@@ -412,7 +376,7 @@
             // Clear MSAL session tokens — do NOT call logoutRedirect
             // which would clear Microsoft SSO cookies and break Custom Apps auth
             sessionStorage.clear();
-            // Reload to clean URL (no hash) so MSAL initializes fresh
+            // Reload page fresh
             window.location.replace(window.location.origin + window.location.pathname);
         }
 
