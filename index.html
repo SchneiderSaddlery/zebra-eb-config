@@ -7,7 +7,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
-    <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
     <style>
         *, *::before, *::after {
             box-sizing: border-box;
@@ -144,11 +143,6 @@
             border-color: #005a80;
         }
 
-        .sign-in-btn:disabled {
-            background-color: #999;
-            border-color: #999;
-        }
-
         #debug-status {
             font-size: 11px;
             color: #999;
@@ -162,10 +156,10 @@
     </style>
 </head>
 <body>
-    <!-- Sign-in screen (visible by default so page is never blank) -->
+    <!-- Sign-in screen (visible by default) -->
     <div id="sign-in-screen">
         <img src="ss-logo.png" alt="Schneiders logo">
-        <button class="sign-in-btn" id="sign-in-btn" disabled onclick="signIn()">Loading...</button>
+        <button class="sign-in-btn" id="sign-in-btn" onclick="signIn()">Sign In with Microsoft</button>
         <div id="debug-status"></div>
     </div>
 
@@ -186,31 +180,40 @@
 
     <script>
         // --- Configuration ---
-        var MSAL_CONFIG = {
-            auth: {
-                clientId: 'fd1afd85-d619-46c6-b7ef-3bf261086e65',
-                authority: 'https://login.microsoftonline.com/2df558ec-e934-42b4-b689-fbec5a992751',
-                redirectUri: window.location.origin + window.location.pathname
-            },
-            cache: {
-                cacheLocation: 'sessionStorage'
-            }
-        };
-
-        var LOGIN_SCOPES = { scopes: ['User.Read'] };
+        var CLIENT_ID = 'fd1afd85-d619-46c6-b7ef-3bf261086e65';
+        var TENANT_ID = '2df558ec-e934-42b4-b689-fbec5a992751';
+        var REDIRECT_URI = 'https://schneidersaddlery.github.io/zebra-eb-config/';
         var INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
         var TEAMS_WEBHOOK_URL = ''; // Set after creating webhook
 
         // --- State ---
-        var msalInstance = null;
-        var msalReady = false;
         var inactivityTimer = null;
 
-        // --- Debug status (visible on page for troubleshooting) ---
+        // --- Debug status ---
         function setStatus(msg) {
             var el = document.getElementById('debug-status');
             if (el) el.textContent = msg;
-            console.log('[ScannerLogin] ' + msg);
+        }
+
+        // --- JWT decode (no library needed — just base64 decode the payload) ---
+        function decodeJwt(token) {
+            var parts = token.split('.');
+            if (parts.length !== 3) return null;
+            var payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            while (payload.length % 4) payload += '=';
+            var json = atob(payload);
+            return JSON.parse(json);
+        }
+
+        // --- Generate random nonce ---
+        function generateNonce() {
+            var array = new Uint8Array(16);
+            crypto.getRandomValues(array);
+            var hex = '';
+            for (var i = 0; i < array.length; i++) {
+                hex += ('0' + array[i].toString(16)).slice(-2);
+            }
+            return hex;
         }
 
         // --- Device identification via Fully Kiosk JS API ---
@@ -274,17 +277,6 @@
         }
 
         // --- UI updates ---
-        function showSignIn() {
-            document.getElementById('sign-in-screen').classList.remove('hidden');
-            document.getElementById('app-view').classList.add('hidden');
-        }
-
-        function enableSignInButton() {
-            var btn = document.getElementById('sign-in-btn');
-            btn.disabled = false;
-            btn.textContent = 'Sign In with Microsoft';
-        }
-
         function showApp(displayName) {
             document.getElementById('user-display-name').textContent = displayName;
             document.getElementById('sign-in-screen').classList.add('hidden');
@@ -292,96 +284,90 @@
             startInactivityTracking();
         }
 
-        // --- MSAL auth (popup flow — avoids redirect/hash issues in FK WebView) ---
+        // --- Sign in: redirect to Microsoft login ---
+        function signIn() {
+            var nonce = generateNonce();
+            sessionStorage.setItem('auth_nonce', nonce);
 
-        async function initMsal() {
-            try {
-                setStatus('Loading...');
+            var authUrl = 'https://login.microsoftonline.com/' + TENANT_ID + '/oauth2/v2.0/authorize'
+                + '?client_id=' + encodeURIComponent(CLIENT_ID)
+                + '&response_type=id_token'
+                + '&redirect_uri=' + encodeURIComponent(REDIRECT_URI)
+                + '&scope=' + encodeURIComponent('openid profile')
+                + '&response_mode=fragment'
+                + '&nonce=' + encodeURIComponent(nonce);
 
-                if (typeof msal === 'undefined') {
-                    setStatus('ERROR: MSAL library failed to load');
-                    enableSignInButton();
-                    return;
-                }
-
-                // Clean up any stale hash from previous redirect attempts
-                if (location.hash) {
-                    history.replaceState(null, '', window.location.pathname);
-                    sessionStorage.clear();
-                }
-
-                msalInstance = new msal.PublicClientApplication(MSAL_CONFIG);
-                await msalInstance.initialize();
-
-                // Check for existing session
-                var accounts = msalInstance.getAllAccounts();
-                if (accounts.length > 0) {
-                    setStatus('Validating session...');
-                    try {
-                        await msalInstance.acquireTokenSilent({
-                            scopes: ['User.Read'],
-                            account: accounts[0]
-                        });
-                        setStatus('Welcome back ' + accounts[0].name);
-                        onSignInSuccess(accounts[0]);
-                    } catch (e) {
-                        setStatus('Session expired');
-                        msalReady = true;
-                        enableSignInButton();
-                    }
-                    return;
-                }
-
-                // No session — show sign-in
-                msalReady = true;
-                setStatus('');
-                enableSignInButton();
-            } catch (e) {
-                setStatus('Init error: ' + e.message);
-                enableSignInButton();
-            }
+            window.location.href = authUrl;
         }
 
-        function onSignInSuccess(account) {
-            var displayName = account.name || account.username;
-            showApp(displayName);
-            notifyTeams(displayName, getDeviceName());
-        }
-
-        async function signIn() {
-            if (!msalInstance) {
-                setStatus('Not ready — please wait');
-                return;
-            }
-            var btn = document.getElementById('sign-in-btn');
-            try {
-                setStatus('Opening Microsoft login...');
-                btn.disabled = true;
-                var response = await msalInstance.loginPopup(LOGIN_SCOPES);
-                if (response && response.account) {
-                    setStatus('Welcome ' + response.account.name);
-                    onSignInSuccess(response.account);
-                } else {
-                    setStatus('Sign-in cancelled');
-                    btn.disabled = false;
-                }
-            } catch (e) {
-                setStatus('Sign-in error: ' + e.message);
-                btn.disabled = false;
-            }
-        }
-
+        // --- Sign out ---
         function signOut() {
             stopInactivityTracking();
-            // Clear MSAL session tokens — do NOT call logoutRedirect
-            // which would clear Microsoft SSO cookies and break Custom Apps auth
             sessionStorage.clear();
-            // Reload page fresh
-            window.location.replace(window.location.origin + window.location.pathname);
+            window.location.replace(REDIRECT_URI);
         }
 
-        // --- Init ---
-        initMsal();
+        // --- On page load: check for ID token in hash or existing session ---
+        function init() {
+            var hash = window.location.hash;
+
+            // 1. Check if we have an id_token in the URL hash (returning from Microsoft login)
+            if (hash && hash.indexOf('id_token=') !== -1) {
+                var params = {};
+                hash.substring(1).split('&').forEach(function(pair) {
+                    var parts = pair.split('=');
+                    params[decodeURIComponent(parts[0])] = decodeURIComponent(parts[1] || '');
+                });
+
+                if (params.id_token) {
+                    var claims = decodeJwt(params.id_token);
+                    if (claims) {
+                        var savedNonce = sessionStorage.getItem('auth_nonce');
+                        if (savedNonce && claims.nonce === savedNonce) {
+                            var displayName = claims.name || claims.preferred_username || claims.upn || 'User';
+                            sessionStorage.setItem('user_name', displayName);
+                            sessionStorage.removeItem('auth_nonce');
+                            history.replaceState(null, '', window.location.pathname);
+                            showApp(displayName);
+                            notifyTeams(displayName, getDeviceName());
+                            return;
+                        } else {
+                            setStatus('Nonce mismatch — please sign in again');
+                            sessionStorage.clear();
+                            history.replaceState(null, '', window.location.pathname);
+                            return;
+                        }
+                    }
+                }
+
+                setStatus('Sign-in failed — please try again');
+                history.replaceState(null, '', window.location.pathname);
+                return;
+            }
+
+            // 2. Check for error in hash (e.g., user cancelled)
+            if (hash && hash.indexOf('error=') !== -1) {
+                setStatus('Sign-in cancelled');
+                history.replaceState(null, '', window.location.pathname);
+                return;
+            }
+
+            // 3. Clean up any stale hash
+            if (hash) {
+                history.replaceState(null, '', window.location.pathname);
+            }
+
+            // 4. Check for existing session
+            var savedName = sessionStorage.getItem('user_name');
+            if (savedName) {
+                showApp(savedName);
+                return;
+            }
+
+            // 5. No session — sign-in screen is already visible
+        }
+
+        init();
     </script>
 </body>
 </html>
