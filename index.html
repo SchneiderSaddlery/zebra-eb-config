@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
     <style>
         *, *::before, *::after {
             box-sizing: border-box;
@@ -30,16 +31,46 @@
 
         header {
             background-color: #ffffff;
-            padding: 16px;
+            padding: 12px 16px;
             display: flex;
             align-items: center;
-            justify-content: center;
+            justify-content: space-between;
             border-bottom: 1px solid #e0e6eb;
         }
 
         header img {
-            max-width: 200px;
+            max-width: 160px;
             height: auto;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 14px;
+            color: #555;
+        }
+
+        .user-name {
+            font-weight: 500;
+            color: #333;
+        }
+
+        .sign-out-btn {
+            font-family: 'Roboto', sans-serif;
+            font-size: 13px;
+            color: #007bad;
+            background: none;
+            border: 1px solid #007bad;
+            padding: 6px 12px;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .sign-out-btn:active {
+            background-color: #007bad;
+            color: #ffffff;
         }
 
         main {
@@ -74,15 +105,231 @@
             background-color: #005a80;
             border-color: #005a80;
         }
+
+        /* Sign-in screen */
+        #sign-in-screen {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px 16px;
+            gap: 24px;
+        }
+
+        #sign-in-screen img {
+            max-width: 240px;
+            height: auto;
+        }
+
+        .sign-in-btn {
+            display: block;
+            width: 100%;
+            max-width: 640px;
+            padding: 18px 24px;
+            font-family: 'Roboto', sans-serif;
+            font-size: 18px;
+            font-weight: 500;
+            text-align: center;
+            color: #ffffff;
+            background-color: #007bad;
+            border: 1px solid #007bad;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .sign-in-btn:active {
+            background-color: #005a80;
+            border-color: #005a80;
+        }
+
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
-    <header>
+    <!-- Sign-in screen (shown when not authenticated) -->
+    <div id="sign-in-screen" class="hidden">
         <img src="ss-logo.png" alt="Schneiders logo">
-    </header>
-    <main>
-        <a href="https://fulfillment.aws-prod.sstack.com/app-list" class="app-btn">Custom Apps</a>
-        <a href="https://sstack.fulfil.io/client/" class="app-btn">Fulfil WMS</a>
-    </main>
+        <button class="sign-in-btn" onclick="signIn()">Sign In with Microsoft</button>
+    </div>
+
+    <!-- Authenticated view -->
+    <div id="app-view" class="hidden">
+        <header>
+            <img src="ss-logo.png" alt="Schneiders logo">
+            <div class="user-info">
+                <span class="user-name" id="user-display-name"></span>
+                <button class="sign-out-btn" onclick="signOut()">Sign Out</button>
+            </div>
+        </header>
+        <main>
+            <a href="https://fulfillment.aws-prod.sstack.com/app-list" class="app-btn">Custom Apps</a>
+            <a href="https://sstack.fulfil.io/client/" class="app-btn">Fulfil WMS</a>
+        </main>
+    </div>
+
+    <script>
+        // --- Configuration ---
+        const MSAL_CONFIG = {
+            auth: {
+                clientId: 'fd1afd85-d619-46c6-b7ef-3bf261086e65',
+                authority: 'https://login.microsoftonline.com/2df558ec-e934-42b4-b689-fbec5a992751',
+                redirectUri: window.location.origin + window.location.pathname
+            },
+            cache: {
+                cacheLocation: 'sessionStorage'
+            }
+        };
+
+        const LOGIN_SCOPES = { scopes: ['User.Read'] };
+        const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+        const TEAMS_WEBHOOK_URL = ''; // Set after creating webhook
+
+        // --- State ---
+        let msalInstance = null;
+        let inactivityTimer = null;
+
+        // --- Device identification via Fully Kiosk JS API ---
+        function getDeviceName() {
+            try {
+                if (typeof fully !== 'undefined') {
+                    // Try hostname first, fall back to IP, then MAC
+                    var hostname = fully.getHostname && fully.getHostname();
+                    if (hostname) return hostname;
+                    var ip = fully.getIp4Address && fully.getIp4Address();
+                    if (ip) return ip;
+                    var mac = fully.getMacAddress && fully.getMacAddress();
+                    if (mac) return mac;
+                }
+            } catch (e) { /* not in Fully Kiosk */ }
+            // Fallback: check localStorage for a manually set name
+            var stored = localStorage.getItem('deviceName');
+            if (stored) return stored;
+            // Final fallback
+            return 'Unknown Device';
+        }
+
+        // --- Inactivity auto-logout ---
+        function resetInactivityTimer() {
+            if (inactivityTimer) clearTimeout(inactivityTimer);
+            inactivityTimer = setTimeout(function() {
+                signOut();
+            }, INACTIVITY_TIMEOUT);
+        }
+
+        function startInactivityTracking() {
+            var events = ['touchstart', 'click', 'scroll', 'keydown'];
+            events.forEach(function(evt) {
+                document.addEventListener(evt, resetInactivityTimer, { passive: true });
+            });
+            resetInactivityTimer();
+        }
+
+        function stopInactivityTracking() {
+            if (inactivityTimer) clearTimeout(inactivityTimer);
+            var events = ['touchstart', 'click', 'scroll', 'keydown'];
+            events.forEach(function(evt) {
+                document.removeEventListener(evt, resetInactivityTimer);
+            });
+        }
+
+        // --- Teams webhook ---
+        function notifyTeams(userName, deviceName) {
+            if (!TEAMS_WEBHOOK_URL) return;
+            var now = new Date();
+            var time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            var date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            var message = userName + ' signed into ' + deviceName + ' at ' + time + ' (' + date + ')';
+
+            fetch(TEAMS_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    '@type': 'MessageCard',
+                    summary: 'Scanner Login',
+                    text: message
+                })
+            }).catch(function() { /* silent fail — logging is best-effort */ });
+        }
+
+        // --- UI updates ---
+        function showSignIn() {
+            document.getElementById('sign-in-screen').classList.remove('hidden');
+            document.getElementById('app-view').classList.add('hidden');
+        }
+
+        function showApp(displayName) {
+            document.getElementById('user-display-name').textContent = displayName;
+            document.getElementById('sign-in-screen').classList.add('hidden');
+            document.getElementById('app-view').classList.remove('hidden');
+            startInactivityTracking();
+        }
+
+        // --- MSAL auth ---
+        async function initMsal() {
+            msalInstance = new msal.PublicClientApplication(MSAL_CONFIG);
+            await msalInstance.initialize();
+
+            // Handle redirect response (after Microsoft login page)
+            var response = await msalInstance.handleRedirectPromise();
+            if (response && response.account) {
+                onSignInSuccess(response.account);
+                return;
+            }
+
+            // Check for existing session
+            var accounts = msalInstance.getAllAccounts();
+            if (accounts.length > 0) {
+                // Try silent token acquisition to verify session is still valid
+                try {
+                    var silentResult = await msalInstance.acquireTokenSilent({
+                        scopes: ['User.Read'],
+                        account: accounts[0]
+                    });
+                    onSignInSuccess(accounts[0]);
+                } catch (e) {
+                    // Session expired, show sign-in
+                    showSignIn();
+                }
+                return;
+            }
+
+            showSignIn();
+        }
+
+        function onSignInSuccess(account) {
+            var displayName = account.name || account.username;
+            showApp(displayName);
+            notifyTeams(displayName, getDeviceName());
+        }
+
+        async function signIn() {
+            try {
+                await msalInstance.loginRedirect(LOGIN_SCOPES);
+            } catch (e) {
+                console.error('Sign-in failed:', e);
+            }
+        }
+
+        function signOut() {
+            stopInactivityTracking();
+            if (msalInstance) {
+                var accounts = msalInstance.getAllAccounts();
+                if (accounts.length > 0) {
+                    msalInstance.logoutRedirect({
+                        account: accounts[0],
+                        postLogoutRedirectUri: window.location.origin + window.location.pathname
+                    });
+                    return;
+                }
+            }
+            sessionStorage.clear();
+            showSignIn();
+        }
+
+        // --- Init ---
+        initMsal();
+    </script>
 </body>
 </html>
