@@ -314,16 +314,11 @@
 
         function signOut() {
             stopInactivityTracking();
-            // Clear only the local MSAL session — do NOT call logoutRedirect
+            // Clear MSAL session tokens — do NOT call logoutRedirect
             // which would clear Microsoft SSO cookies and break Custom Apps auth
-            if (msalInstance) {
-                var accounts = msalInstance.getAllAccounts();
-                accounts.forEach(function(acct) {
-                    msalInstance.setActiveAccount(null);
-                });
-            }
             sessionStorage.clear();
-            showSignIn();
+            // Reload page so MSAL initializes fresh (avoids stale in-memory state)
+            window.location.replace(window.location.origin + window.location.pathname);
         }
 
         // --- Init ---
