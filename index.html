@@ -74,6 +74,30 @@
             background-color: #005a80;
             border-color: #005a80;
         }
+
+        .signout-btn {
+            display: block;
+            width: 100%;
+            max-width: 640px;
+            padding: 14px 24px;
+            font-family: 'Roboto', sans-serif;
+            font-size: 16px;
+            font-weight: 400;
+            text-align: center;
+            color: #ffffff;
+            background-color: #6c757d;
+            border: 1px solid #6c757d;
+            border-radius: 0;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            margin-top: 8px;
+        }
+
+        .signout-btn:active {
+            background-color: #545b62;
+            border-color: #545b62;
+        }
     </style>
 </head>
 <body>
@@ -83,6 +107,35 @@
     <main>
         <a href="https://fulfillment.aws-prod.sstack.com/app-list" class="app-btn">Custom Apps</a>
         <a href="https://sstack.fulfil.io/client/" class="app-btn">Fulfil WMS</a>
+        <button class="signout-btn" onclick="signOut()">Sign Out</button>
     </main>
+    <script>
+        function signOut() {
+            if (typeof fully !== 'undefined') {
+                fully.clearCookies();
+                fully.clearWebstorage();
+                fully.clearCache();
+                fully.loadStartUrl();
+            } else {
+                sessionStorage.clear();
+                localStorage.clear();
+                location.reload();
+            }
+        }
+
+        var idleTimer;
+        var IDLE_TIMEOUT = 30 * 60 * 1000;
+
+        function resetIdleTimer() {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(signOut, IDLE_TIMEOUT);
+        }
+
+        ['touchstart', 'click', 'scroll'].forEach(function(evt) {
+            document.addEventListener(evt, resetIdleTimer, { passive: true });
+        });
+
+        resetIdleTimer();
+    </script>
 </body>
 </html>
