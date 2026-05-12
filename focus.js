@@ -105,6 +105,11 @@
       return [];
     }
 
+    // Label printing page â€” autofocus interferes with the print UI
+    if (path === '/label-printing' || path.indexOf('/label-printing/') === 0) {
+      return [];
+    }
+
     // WMS list/browse pages â€” don't autofocus, let user use search bar
     if (hash.includes('/all') || hash === '#/receiving' || hash === '#/receiving/' ||
         hash === '#/customer' || hash === '#/customer/' ||
