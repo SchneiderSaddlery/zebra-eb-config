@@ -100,6 +100,12 @@
     var path = location.pathname;
     var hash = location.hash;
 
+    // Search/list pages - Fulfil renders tree views with .main-tree-view + .ff-tree-table-wrapper.
+    // DOM-based detection catches V1 ERP search pages and any future tree view without URL maintenance.
+    if (document.querySelector('.main-tree-view, .ff-tree-table-wrapper')) {
+      return [];
+    }
+
     // Store Replenishment â€” no autofocus on this app (scan-Enter still fires globally)
     if (location.hostname === 'store-replenishment.aws-prod.sstack.com') {
       return [];
