@@ -54,15 +54,16 @@
 
   // WMS Reference field guard: if Fulfil focuses Reference on page load, blur it and scroll back up
   // Skip on list/browse pages (e.g. /receiving/supplier/all) â€” no scan field there
+  // EXCEPTION: never blur #product_barcode_input â€” that IS the WMS scan field, not Reference.
   if (location.pathname.includes('/wms/') && !location.hash.includes('/all') && !/^#\/receiving\/supplier\/[a-z]/i.test(location.hash)) {
     var refGuardInterval = setInterval(function() {
       var active = document.activeElement;
-      if (active && active.classList.contains('ff-textfield-input')) {
+      if (active && active.classList.contains('ff-textfield-input') && active.id !== 'product_barcode_input') {
         log('Blurring Reference field focused by Fulfil');
         active.blur();
         window.scrollTo(0, 0);
       }
-      var scanBar = document.querySelector('input.MuiInput-input');
+      var scanBar = document.querySelector('input#product_barcode_input') || document.querySelector('input.MuiInput-input');
       if (scanBar) {
         clearInterval(refGuardInterval);
         scanBar.focus();
@@ -140,13 +141,14 @@
       ];
     }
 
-    // WMS app (/wms/) â€” never focus ff-textfield-input (Reference field), only scan bar
+    // WMS app (/wms/) â€” Fulfil's product_barcode_input scan field IS an ff-textfield-input
+    // (the broad ff-textfield-input exclusion would skip the real scan field). Target the
+    // scan input by ID, then fall back to legacy MUI shapes for older WMS pages.
     if (path.includes('/wms/')) {
       return [
+        'input#product_barcode_input',
         'input.MuiInput-input',
-        'input.mat-mdc-input-element',
-        'input[type="text"]:not([readonly]):not(.ff-textfield-input)',
-        'input:not([type]):not([readonly]):not(.ff-textfield-input)'
+        'input.mat-mdc-input-element'
       ];
     }
 
