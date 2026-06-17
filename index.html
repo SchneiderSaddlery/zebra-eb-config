@@ -112,20 +112,31 @@
     </main>
     <script>
         function signOut() {
-            if (typeof fully !== 'undefined') {
-                fully.clearCookies();
-                fully.clearWebstorage();
-                fully.clearCache();
-                fully.loadStartUrl();
-            } else {
-                sessionStorage.clear();
-                localStorage.clear();
-                location.reload();
+            function logoutIframe(url) {
+                var f = document.createElement('iframe');
+                f.style.display = 'none';
+                f.src = url;
+                document.body.appendChild(f);
             }
+            logoutIframe('https://sstack.fulfil.io/v2/logout');
+            logoutIframe('https://auth.fulfil.io/logout');
+            setTimeout(function() {
+                if (typeof fully !== 'undefined') {
+                    fully.clearCookies();
+                    fully.clearWebstorage();
+                    fully.clearCache();
+                    if (typeof fully.clearFormData === 'function') fully.clearFormData();
+                    fully.loadStartUrl();
+                } else {
+                    sessionStorage.clear();
+                    localStorage.clear();
+                    location.reload();
+                }
+            }, 2000);
         }
 
         var idleTimer;
-        var IDLE_TIMEOUT = 30 * 60 * 1000;
+        var IDLE_TIMEOUT = 8 * 60 * 60 * 1000;
 
         function resetIdleTimer() {
             clearTimeout(idleTimer);
