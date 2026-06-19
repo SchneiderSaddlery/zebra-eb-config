@@ -73,6 +73,12 @@
     setTimeout(function() { clearInterval(refGuardInterval); }, 10000);
   }
 
+  // DIAGNOSTIC DISABLE 2026-06-19: Fulfil support asked us to disable the
+  // window.open override + target=_blank intercept while they investigate the
+  // /authorize 500 (TECH-6242 follow-up). Restore both blocks after the
+  // diagnostic completes — they prevent hidden WebView tab accumulation that
+  // crashes the scanner browser after ~8 hours of use (original fix 2026-04-13).
+  /*
   // Tab leak fix: force window.open to navigate current tab instead of spawning new tabs
   try {
     var origOpen = window.open;
@@ -95,6 +101,7 @@
       window.location.href = a.href;
     }
   }, true);
+  */
 
   // Context-aware selector: pick the right scan field based on URL
   function getSelectors() {
