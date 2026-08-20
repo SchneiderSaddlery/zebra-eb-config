@@ -1,5 +1,136 @@
 (function () {
   'use strict';
+  /* -------------------------------------------------------------------------
+   * TECH-6551 auth diagnostics. PILOT BLOCK.
+   *
+   * Why this exists: the scanner sometimes gets a valid OAuth code and still
+   * lands back on a login page (SS27, 2026-08-20 10:01 -> bounced, 25 min).
+   * Every screenshot of that state shows a CLEAN login page -- Fulfil renders
+   * no error at all -- so the reason lives in the HTTP responses and nothing
+   * outside the WebView can see it. This block watches those responses.
+   *
+   * How the data gets out, with no collector service: FK's heartbeat reports
+   * `currentPageUrl` INCLUDING the fragment (proven -- SS3 reports
+   * `sstack.fulfil.io/wms/#/customer/batch/790221`), and the auth monitor
+   * already reads that field every 3 minutes. So we stamp a short fragment and
+   * the existing poller picks it up.
+   *
+   * Safety rules this block obeys, in order of importance:
+   *   1. It NEVER throws. Everything is wrapped; any failure returns quietly.
+   *      A bug here would stop 34 scanners logging in, which is far worse than
+   *      no diagnostics.
+   *   2. It NEVER records `code` or `state` VALUES -- only booleans and HTTP
+   *      status numbers. Those query params are live credentials.
+   *   3. It NEVER navigates, never reloads, never touches the DOM, and only
+   *      rewrites the fragment once the OAuth transaction is already over
+   *      (i.e. on a login FORM page, never on /authorize or a callback).
+   *   4. It runs ONLY on Fulfil auth hosts and returns immediately elsewhere,
+   *      before the main focus.js logic is reached.
+   *
+   * Kill switch: localStorage.ssAuthDxOff = '1' disables it on that device.
+   * ---------------------------------------------------------------------- */
+  (function () {
+    'use strict';
+    try {
+      if (window.top !== window.self) return;        // never inside an iframe
+
+      var h = (location.hostname || '').toLowerCase();
+      if (h.indexOf('fulfil') === -1) return;
+      if (h.indexOf('auth') === -1 && h.indexOf('login.') !== 0) return;
+
+      try { if (localStorage.getItem('ssAuthDxOff') === '1') return; } catch (e) { return; }
+
+      var KEY = 'ssAuthDx';
+      var MAX_STATUSES = 8;
+
+      function load() {
+        try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; }
+        catch (e) { return {}; }
+      }
+      function save(o) {
+        try { localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {}
+      }
+
+      // Only once the transaction is over. Rewriting the URL mid-flow could
+      // disturb the very thing we are trying to observe.
+      function onLoginForm() {
+        var p = (location.pathname || '').toLowerCase();
+        return p.indexOf('/login') !== -1 || p.indexOf('/signin') !== -1;
+      }
+
+      function publish(o) {
+        try {
+          if (!onLoginForm()) return;
+          if (!window.history || !history.replaceState) return;
+          var tag = 'ssdx=' + o.v + '.' + (o.n || 0) + '.' + (o.code || 0) +
+                    '.' + ((o.s || []).join('-') || '0');
+          if (location.hash === '#' + tag) return;
+          history.replaceState(null, '',
+                               location.pathname + (location.search || '') + '#' + tag);
+        } catch (e) {}
+      }
+
+      // Only failures are interesting; a 200 stream would drown the signal.
+      function note(status) {
+        try {
+          if (!status || status < 400) return;
+          var o = load();
+          o.v = 1;
+          o.s = o.s || [];
+          if (o.s.length < MAX_STATUSES) o.s.push(status);
+          save(o);
+          publish(o);
+        } catch (e) {}
+      }
+
+      var st = load();
+      st.v = 1;
+      st.n = (st.n || 0) + 1;                        // page loads on this origin
+      st.s = st.s || [];
+      // Presence only. The VALUES are short-lived credentials and never stored.
+      st.code = /[?&]code=/.test(location.search || '') ? 1 : 0;
+      save(st);
+      publish(st);
+
+      if (window.fetch && !window.__ssDxFetch) {
+        window.__ssDxFetch = true;
+        var origFetch = window.fetch;
+        window.fetch = function () {
+          var p;
+          try {
+            p = origFetch.apply(this, arguments);
+          } catch (e) {
+            note(0);
+            throw e;
+          }
+          try {
+            // Observe a COPY of the chain. The caller still gets `p` untouched,
+            // so their error handling is unchanged and we add no unhandled
+            // rejection (this branch handles both outcomes).
+            p.then(function (r) { try { note(r && r.status); } catch (e) {} },
+                   function () {});
+          } catch (e) {}
+          return p;
+        };
+      }
+
+      if (window.XMLHttpRequest && XMLHttpRequest.prototype && !window.__ssDxXhr) {
+        window.__ssDxXhr = true;
+        var origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function () {
+          try {
+            this.addEventListener('loadend', function () {
+              try { note(this.status); } catch (e) {}
+            });
+          } catch (e) {}
+          return origSend.apply(this, arguments);
+        };
+      }
+    } catch (e) {
+      /* Diagnostics must never be the reason a scanner cannot log in. */
+    }
+  })();
+
   var CONFIG = {
     allowedHosts: ['sstack.fulfil.io', 'fulfillment.aws-prod.sstack.com', 'sstack-sandbox.fulfil.app', 'store-replenishment.aws-prod.sstack.com'],
     debugMode: true,
