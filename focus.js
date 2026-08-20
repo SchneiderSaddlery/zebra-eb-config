@@ -10,8 +10,8 @@
    * outside the WebView can see it. This block watches those responses.
    *
    * How the data gets out, with no collector service: FK's heartbeat reports
-   * `currentPageUrl` INCLUDING the fragment (proven -- SS3 reports
-   * `sstack.fulfil.io/wms/#/customer/batch/790221`), and the auth monitor
+   * 'currentPageUrl' INCLUDING the fragment (proven -- SS3 reports
+   * 'sstack.fulfil.io/wms/#/customer/batch/790221'), and the auth monitor
    * already reads that field every 3 minutes. So we stamp a short fragment and
    * the existing poller picks it up.
    *
@@ -19,7 +19,7 @@
    *   1. It NEVER throws. Everything is wrapped; any failure returns quietly.
    *      A bug here would stop 34 scanners logging in, which is far worse than
    *      no diagnostics.
-   *   2. It NEVER records `code` or `state` VALUES -- only booleans and HTTP
+   *   2. It NEVER records 'code' or 'state' VALUES -- only booleans and HTTP
    *      status numbers. Those query params are live credentials.
    *   3. It NEVER navigates, never reloads, never touches the DOM, and only
    *      rewrites the fragment once the OAuth transaction is already over
@@ -104,7 +104,7 @@
             throw e;
           }
           try {
-            // Observe a COPY of the chain. The caller still gets `p` untouched,
+            // Observe a COPY of the chain. The caller still gets 'p' untouched,
             // so their error handling is unchanged and we add no unhandled
             // rejection (this branch handles both outcomes).
             p.then(function (r) { try { note(r && r.status); } catch (e) {} },
