@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   /* -------------------------------------------------------------------------
-   * TECH-6551 auth diagnostics. PILOT BLOCK.
+   * TECH-6551 auth diagnostics. PILOT BLOCK -- v2.
    *
    * Why this exists: the scanner sometimes gets a valid OAuth code and still
    * lands back on a login page (SS27, 2026-08-20 10:01 -> bounced, 25 min).
@@ -14,6 +14,53 @@
    * 'sstack.fulfil.io/wms/#/customer/batch/790221'), and the auth monitor
    * already reads that field every 3 minutes. So we stamp a short fragment and
    * the existing poller picks it up.
+   *
+   * ---- WHAT CHANGED IN v2, AND WHY -----------------------------------------
+   * v1 ran on SS23 for three days and its statuses field was EMPTY on a real,
+   * confirmed bounce (ssdx=1.513.0.0). That is the finding, not a bug: the
+   * fetch/XHR hooks are structurally blind to a top-level DOCUMENT navigation,
+   * which is what the failing callback almost certainly is. v2 fixes three
+   * things the live pilot exposed:
+   *
+   *   1. THE DOCUMENT'S OWN HTTP STATUS is now read, from
+   *      performance.getEntriesByType('navigation')[0].responseStatus, plus
+   *      .redirectCount. These TC21s run Chrome 150, far past the Chrome 109
+   *      that shipped responseStatus.
+   *      NOTE, and this matters when reading the data: the browser FOLLOWS a
+   *      302 transparently, so a redirected callback shows up as
+   *      responseStatus 200 with redirectCount >= 1 -- NOT as status 302. A
+   *      login page arriving with redirectCount > 0 is therefore the proof
+   *      that the callback bounced rather than errored, and a 4xx/5xx in that
+   *      field is the error we have never once observed.
+   *
+   *   2. A PER-ATTEMPT COUNTER. v1's counter was cumulative and never reset --
+   *      it read 513 and stayed 513 across six samples while the device sat
+   *      parked, so it could never answer "how many tries for THIS login".
+   *      'attempt' now resets when an OAuth transaction starts (/authorize) or
+   *      after ATTEMPT_GAP_MS of quiet. The cumulative count is kept too.
+   *
+   *   3. THE ORIGIN IS STAMPED INTO THE MARKER. Fragments leak across origins
+   *      through redirect chains -- v1 showed n=22 on canary.auth/authorize and
+   *      n=513 on canary.auth/login three minutes later, because the 22 was
+   *      almost certainly written on login.fulfil.io (separate origin, separate
+   *      localStorage) and carried along the redirect. A marker's host is not
+   *      trustworthy; the origin field is.
+   *
+   * Marker: ssdx=2.<origin>.<attempt>.<loads>.<code>.<docStatus>.<redirects>.<statuses>
+   *   origin    1 login.fulfil.io  2 canary.auth.fulfil.io  3 auth.fulfil.io  9 other
+   *   attempt   loads since this OAuth attempt began, on this origin
+   *   loads     cumulative loads on this origin (v1's field, kept)
+   *   code      1 if this load carried ?code=
+   *   docStatus navigation responseStatus, 0 if unavailable
+   *   redirects navigation redirectCount, 0 if unavailable
+   *   statuses  dash-joined fetch/XHR statuses >= 400, or 0
+   *
+   * !! EVERY FIELD MUST BE NUMERIC. The monitor whitelists the marker with
+   *    ^ssdx=[0-9.-]{1,64}$ and DISCARDS anything else, because a fragment is
+   *    otherwise free-form app state and storing it wholesale would log
+   *    customer data. A letter anywhere in here makes the marker invisible,
+   *    silently. Keep this whole block ASCII too -- focus.js already carries
+   *    one mojibake scar from a non-ASCII character making the FK round trip.
    *
    * Safety rules this block obeys, in order of importance:
    *   1. It NEVER throws. Everything is wrapped; any failure returns quietly.
@@ -41,7 +88,26 @@
       try { if (localStorage.getItem('ssAuthDxOff') === '1') return; } catch (e) { return; }
 
       var KEY = 'ssAuthDx';
-      var MAX_STATUSES = 8;
+      var VER = 2;
+      var MAX_STATUSES = 6;
+      var MAX_TAG = 64;                              // the monitor's whitelist cap
+      // Quiet gap after which the next load is a NEW login attempt rather than
+      // another try at the current one. The monitor polls every 3 min, so this
+      // has to be comfortably longer than a human's retry cadence.
+      var ATTEMPT_GAP_MS = 5 * 60 * 1000;
+
+      // Numeric because the marker must stay [0-9.-]. 9 = an auth host we have
+      // not seen before, which is itself worth knowing.
+      function originCode() {
+        if (h === 'login.fulfil.io') return 1;
+        if (h === 'canary.auth.fulfil.io') return 2;
+        if (h === 'auth.fulfil.io') return 3;
+        return 9;
+      }
+
+      function now() {
+        try { return Date.now ? Date.now() : 0; } catch (e) { return 0; }
+      }
 
       function load() {
         try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; }
@@ -51,6 +117,10 @@
         try { localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {}
       }
 
+      function onAuthorize() {
+        return (location.pathname || '').toLowerCase().indexOf('/authorize') !== -1;
+      }
+
       // Only once the transaction is over. Rewriting the URL mid-flow could
       // disturb the very thing we are trying to observe.
       function onLoginForm() {
@@ -58,12 +128,38 @@
         return p.indexOf('/login') !== -1 || p.indexOf('/signin') !== -1;
       }
 
+      // The document's OWN response, which fetch/XHR hooks cannot see. This is
+      // the whole reason v2 exists.
+      function navTiming() {
+        var out = { status: 0, redirects: 0 };
+        try {
+          var perf = window.performance;
+          if (!perf || !perf.getEntriesByType) return out;
+          var entries = perf.getEntriesByType('navigation');
+          var n = entries && entries[0];
+          if (!n) return out;
+          if (typeof n.responseStatus === 'number') out.status = n.responseStatus;
+          if (typeof n.redirectCount === 'number') out.redirects = n.redirectCount;
+        } catch (e) {}
+        return out;
+      }
+
+      function tagFor(o) {
+        var s = (o.s || []).join('-') || '0';
+        var head = VER + '.' + (o.o || 0) + '.' + (o.a || 0) + '.' + (o.n || 0) +
+                   '.' + (o.code || 0) + '.' + (o.ds || 0) + '.' + (o.rc || 0);
+        // A marker over the cap fails the monitor's whitelist and vanishes
+        // without trace, so shed the least important field rather than lose
+        // the whole reading.
+        if ((head + '.' + s).length > MAX_TAG) s = '0';
+        return 'ssdx=' + head + '.' + s;
+      }
+
       function publish(o) {
         try {
           if (!onLoginForm()) return;
           if (!window.history || !history.replaceState) return;
-          var tag = 'ssdx=' + o.v + '.' + (o.n || 0) + '.' + (o.code || 0) +
-                    '.' + ((o.s || []).join('-') || '0');
+          var tag = tagFor(o);
           if (location.hash === '#' + tag) return;
           history.replaceState(null, '',
                                location.pathname + (location.search || '') + '#' + tag);
@@ -75,7 +171,7 @@
         try {
           if (!status || status < 400) return;
           var o = load();
-          o.v = 1;
+          o.v = VER;
           o.s = o.s || [];
           if (o.s.length < MAX_STATUSES) o.s.push(status);
           save(o);
@@ -84,13 +180,49 @@
       }
 
       var st = load();
-      st.v = 1;
-      st.n = (st.n || 0) + 1;                        // page loads on this origin
-      st.s = st.s || [];
+      var t = now();
+
+      // A version bump invalidates the old counters rather than silently
+      // mixing v1 and v2 semantics in one record. The cumulative count is the
+      // one field whose meaning did not change, so it carries over.
+      if (st.v !== VER) st = { n: st.n || 0 };
+
+      var quiet = (st.t && t) ? (t - st.t) > ATTEMPT_GAP_MS : false;
+      var fresh = onAuthorize() || !st.a || quiet;
+
+      st.v = VER;
+      st.o = originCode();
+      st.t = t;
+      st.n = (st.n || 0) + 1;                        // cumulative, this origin
+      st.a = fresh ? 1 : (st.a || 0) + 1;            // loads in THIS attempt
+      st.s = fresh ? [] : (st.s || []);
       // Presence only. The VALUES are short-lived credentials and never stored.
       st.code = /[?&]code=/.test(location.search || '') ? 1 : 0;
+
+      var nav = navTiming();
+      st.ds = nav.status;
+      st.rc = nav.redirects;
+
       save(st);
       publish(st);
+
+      // responseStatus is populated once response headers land. It normally
+      // already is by the time injected script runs, but if it was not, one
+      // late re-read is cheap and a missing status is exactly the datum we
+      // cannot afford to lose. typeof guard: setTimeout may be absent.
+      if (!st.ds && typeof setTimeout !== 'undefined') {
+        setTimeout(function () {
+          try {
+            var later = navTiming();
+            if (!later.status && !later.redirects) return;
+            var o = load();
+            o.ds = later.status;
+            o.rc = later.redirects;
+            save(o);
+            publish(o);
+          } catch (e) {}
+        }, 1500);
+      }
 
       if (window.fetch && !window.__ssDxFetch) {
         window.__ssDxFetch = true;
