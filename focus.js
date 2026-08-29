@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   var CONFIG = {
-    allowedHosts: ['sstack.fulfil.io', 'fulfillment.aws-prod.sstack.com', 'sstack-sandbox.fulfil.app', 'store-replenishment.aws-prod.sstack.com'],
+    allowedHosts: ['sstack.fulfil.io', 'fulfillment.aws-prod.sstack.com', 'fulfillment.aws-dev.sstack.com', 'sstack-sandbox.fulfil.app', 'store-replenishment.aws-prod.sstack.com'],
     debugMode: true,
     focusCheckInterval: 3000
   };
@@ -172,7 +172,8 @@
     }
 
     // Custom Apps fallback ï¿½ try mat-mdc inputs, then generic text inputs
-    if (location.hostname === 'fulfillment.aws-prod.sstack.com') {
+    if (location.hostname === 'fulfillment.aws-prod.sstack.com' ||
+        location.hostname === 'fulfillment.aws-dev.sstack.com') {
       return [
         'input.mat-mdc-input-element',
         'input[type="text"]:not([readonly])',
