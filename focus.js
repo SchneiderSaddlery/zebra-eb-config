@@ -12,6 +12,42 @@
     if (data) { console.log(prefix, message, data); } else { console.log(prefix, message); }
   }
 
+  /* TECH-6551: keep the page icon of Fulfil's sign-in host off the network.
+   *
+   * Fully cancels and re-sends every navigation, and the WebView re-requests the current page's
+   * icon at that moment. On canary.auth.fulfil.io that icon request carries the session cookie
+   * from BEFORE the sign-in tap, and Fulfil answers every static file by re-sending whatever
+   * session it received. When the icon reply lands after the sign-in reply it overwrites the
+   * cookie holding the OAuth state, so the callback arrives without it and Fulfil answers 400
+   * ("Let's try that again"). Pointing the icon links at an inline data: URI keeps that fetch
+   * off the network entirely, so there is nothing left to overwrite the cookie.
+   *
+   * Measured on SS20, 2026-09-17, same device and network, recorded per attempt:
+   * without this 5 of 10 sign-ins failed (every failure traced to that icon reply);
+   * with it 14 of 14 succeeded, including the Microsoft path and a fully wiped device.
+   *
+   * Runs BEFORE the allowedHosts gate because the auth hosts are deliberately not in that list.
+   * Never throws, makes no request, never navigates, and touches nothing but the icon links.
+   */
+  (function () {
+    try {
+      if (!/(^|\.)auth\.fulfil\.io$/.test(location.hostname || '')) return;
+      var BLANK = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22/%3E';
+      var swap = function () {
+        try {
+          var links = document.querySelectorAll('link[rel~="icon"],link[rel="apple-touch-icon"]');
+          for (var i = 0; i < links.length; i++) {
+            if (links[i].getAttribute('href') !== BLANK) links[i].setAttribute('href', BLANK);
+          }
+        } catch (e) {}
+      };
+      swap();
+      // Fully injects at page finish, so the swap normally lands immediately; the listener only
+      // matters if the script is ever injected earlier (a CDP session, a future Fully setting).
+      if (document.readyState !== 'complete') window.addEventListener('load', swap);
+    } catch (e) {}
+  })();
+
   if (!CONFIG.allowedHosts.includes(location.hostname)) {
     log('Not on allowed host:', location.hostname);
     return;
