@@ -88,6 +88,40 @@
     }, true);
   })();
 
+  /* TECH-6927: a location dragged or pasted into the scan field submits like a scan.
+   *
+   * Fully's Copy/Paste menu is off fleet-wide (Disable Context Menus), so when a location has no
+   * barcode the floor long-presses the text and drags it into the scan box. Fulfil only acts on
+   * Enter, and the burst detector above never fires for a drop (no keystrokes), so the value sat
+   * in the box until someone tapped Enter, which only works if that unit's keyboard shows one.
+   * The default keyboard is picked by hand per unit, so some units never could.
+   *
+   * Only real (isTrusted) drops and pastes into the current scan field count: typing, other
+   * fields, and synthetic events (including our own Enter) are left alone. The short delay lets
+   * Fulfil's own input handler take the value first, as the scan path's 80 ms debounce does.
+   */
+  (function () {
+    var DROP_ENTER_DELAY_MS = 100;
+    document.addEventListener('input', function (e) {
+      try {
+        if (!e.isTrusted) return;
+        if (e.inputType !== 'insertFromDrop' && e.inputType !== 'insertFromPaste') return;
+        var target = e.target;
+        if (!target || target !== findField()) return;
+        if (!target.value || !String(target.value).trim()) return;
+        setTimeout(function () {
+          try {
+            if (!target.isConnected) return;
+            log('Drop/paste into scan field (' + e.inputType + '), dispatching Enter');
+            ['keydown', 'keypress', 'keyup'].forEach(function (type) {
+              target.dispatchEvent(new KeyboardEvent(type, {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
+            });
+          } catch (err) { log('Drop/paste Enter failed:', err.message); }
+        }, DROP_ENTER_DELAY_MS);
+      } catch (err) { log('Drop/paste handler failed:', err.message); }
+    }, true);
+  })();
+
   // WMS Reference field guard: if Fulfil focuses Reference on page load, blur it and scroll back up
   // Skip on list/browse pages (e.g. /receiving/supplier/all) â€” no scan field there
   // EXCEPTION: never blur #product_barcode_input â€” that IS the WMS scan field, not Reference.
